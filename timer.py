@@ -18,4 +18,10 @@ def timer():
         yield
     finally:
         t2 = default_timer()
-        logger.debug(f'{t2-t1} seconds')
+        logger.debug(f'The operation spent {t2-t1} seconds')
+
+
+if __name__ == '__main__':
+    import time
+    with timer():
+        time.sleep(1)
