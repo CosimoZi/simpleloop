@@ -52,12 +52,14 @@ class Task:
 def run_until_complete(coro):
     tasks = [Task(coro, None)]
     watcher = defaultdict(list)
+    ret = None
     while tasks:
         queue, tasks = tasks, []
         for task in queue:
             try:
                 res = task.coro.send(task.trigger)
             except StopIteration as e:
+                ret = e.value
                 tasks.extend(Task(join_coro, e.value) for join_coro in watcher.pop(task.coro, []))
             else:
                 if isinstance(res, SpawnEvent):
@@ -67,6 +69,7 @@ def run_until_complete(coro):
                     watcher[res.coro].append(task.coro)
                 else:
                     tasks.append(task)
+    return ret
 
 
 if __name__ == '__main__':
