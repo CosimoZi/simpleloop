@@ -27,7 +27,8 @@ class JoinEvent(Event):
 
 @coroutine
 def spawn(coro):
-    yield SpawnEvent(coro)
+    future = yield SpawnEvent(coro)
+    return future
 
 
 @coroutine
@@ -57,13 +58,15 @@ def run_until_complete(coro):
             try:
                 res = task.coro.send(task.trigger)
             except StopIteration as e:
-                tasks.extend(Task(coro, e.value) for coro in watcher.pop(task, []))
+                tasks.extend(Task(join_coro, e.value) for join_coro in watcher.pop(task.coro, []))
             else:
                 if isinstance(res, SpawnEvent):
                     tasks.append(Task(res.coro, None))
-                    tasks.append(task)
+                    tasks.append(Task(task.coro, res.coro))
                 elif isinstance(res, JoinEvent):
-                    watcher[].append(task.coro)
+                    watcher[res.coro].append(task.coro)
+                else:
+                    tasks.append(task)
 
 
 if __name__ == '__main__':
