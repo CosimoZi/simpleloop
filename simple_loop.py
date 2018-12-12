@@ -1,5 +1,5 @@
 from types import coroutine
-from inspect import iscoroutine
+from collections import defaultdict
 
 
 @coroutine
@@ -12,14 +12,34 @@ def hello_world():
     return 'world'
 
 
+class Event:
+    def __init__(self, coro):
+        self.coro = coro
+
+
+class SpawnEvent(Event):
+    pass
+
+
+class JoinEvent(Event):
+    pass
+
+
 @coroutine
 def spawn(coro):
-    yield coro
+    yield SpawnEvent(coro)
+
+
+@coroutine
+def join(future):
+    result = yield JoinEvent(future)
+    return result
 
 
 async def main_coro():
-    await spawn(hello_world())
-    print('ok')
+    future = await spawn(hello_world())
+    result = await join(future)
+    return result
 
 
 class Task:
@@ -30,18 +50,21 @@ class Task:
 
 def run_until_complete(coro):
     tasks = [Task(coro, None)]
+    watcher = defaultdict(list)
     while tasks:
         queue, tasks = tasks, []
         for task in queue:
             try:
                 res = task.coro.send(task.trigger)
-            except StopIteration:
-                pass
+            except StopIteration as e:
+                tasks.extend(Task(coro, e.value) for coro in watcher.pop(task, []))
             else:
-                if iscoroutine(res):
-                    tasks.append(Task(res, None))
-                tasks.append(task)
+                if isinstance(res, SpawnEvent):
+                    tasks.append(Task(res.coro, None))
+                    tasks.append(task)
+                elif isinstance(res, JoinEvent):
+                    watcher[].append(task.coro)
 
 
 if __name__ == '__main__':
-    run_until_complete(main_coro())
+    print(run_until_complete(main_coro()))
