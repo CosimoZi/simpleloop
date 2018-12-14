@@ -5,6 +5,7 @@ from timeit import default_timer as now
 from time import sleep as _sleep
 from functools import total_ordering
 from selectors import DefaultSelector, EVENT_READ, EVENT_WRITE
+from urllib.parse import urlparse
 import socket
 
 from timer import timer
@@ -80,7 +81,8 @@ def sleep(seconds):
 @coroutine
 def receive(stream, chunk_size):
     yield ReadEvent(stream)
-    return stream.recv(chunk_size)
+    chunk = stream.recv(chunk_size)
+    return chunk
 
 
 @coroutine
@@ -91,9 +93,29 @@ def send(stream, data):
         data = data[chunk_size:]
 
 
+async def get(url):
+    url = urlparse(url)
+    try:
+        host, port = url.netloc.split(':')
+    except ValueError:
+        host = url.netloc
+        port = 80
+    else:
+        port = int(port)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    # should also implement async connect here.
+    sock.connect((host, port))
+    sock.setblocking(False)
+    msg = 'GET {0} HTTP/{1} {2}'
+    await send(sock, msg.format(url.path or '/', '1.0', '\r\n\r\n').encode())
+    response = await receive(sock, 1024)
+    sock.close()
+    return response.decode()
+
+
 async def main_coro():
-    future1 = await spawn(sleep(3))
-    future2 = await spawn(sleep(4))
+    future1 = await spawn(get('http://127.0.0.1:8000/'))
+    future2 = await spawn(get('http://127.0.0.1:8000/'))
     result = await joinall(future1, future2)
     return result
 
@@ -141,6 +163,7 @@ def run_until_complete(coro):
             else:
                 timeout = None
             if selector.get_map():
+                # print(dict(selector.get_map()))
                 for key, events in selector.select(timeout):
                     tasks.append(Task(key.data, None))
                     selector.unregister(key.fileobj)
