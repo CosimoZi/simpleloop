@@ -4,6 +4,8 @@ from heapq import heappop, heappush
 from timeit import default_timer as now
 from time import sleep as _sleep
 from functools import total_ordering
+from selectors import DefaultSelector, EVENT_READ, EVENT_WRITE
+import socket
 
 from timer import timer
 
@@ -42,6 +44,16 @@ class SleepEvent(Event):
         self.wakeup_time = seconds + now()
 
 
+class ReadEvent(Event):
+    def __init__(self, stream):
+        self.stream = stream
+
+
+class WriteEvent(Event):
+    def __init__(self, stream):
+        self.stream = stream
+
+
 @coroutine
 def spawn(coro):
     future = yield SpawnEvent(coro)
@@ -63,6 +75,20 @@ def joinall(*futures):
 @coroutine
 def sleep(seconds):
     yield SleepEvent(seconds)
+
+
+@coroutine
+def receive(stream, chunk_size):
+    yield ReadEvent(stream)
+    return stream.recv(chunk_size)
+
+
+@coroutine
+def send(stream, data):
+    while data:
+        yield WriteEvent(stream)
+        chunk_size = stream.send(data)
+        data = data[chunk_size:]
 
 
 async def main_coro():
@@ -106,6 +132,7 @@ def run_until_complete(coro):
     joinall_watcher = defaultdict(list)
     multi_coro_wrappers = dict()
     delayed_tasks = []
+    selector = DefaultSelector()
     ret = None
     while tasks or delayed_tasks:
         if not tasks:
