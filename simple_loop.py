@@ -134,9 +134,18 @@ def run_until_complete(coro):
     delayed_tasks = []
     selector = DefaultSelector()
     ret = None
-    while tasks or delayed_tasks:
+    while tasks or delayed_tasks or selector.get_map():
         if not tasks:
-            _sleep(max((0.0, delayed_tasks[0].wakeup_time - now())))
+            if delayed_tasks:
+                timeout = max((0.0, delayed_tasks[0].wakeup_time - now()))
+            else:
+                timeout = None
+            if selector.get_map():
+                for key, events in selector.select(timeout):
+                    tasks.append(Task(key.data, None))
+                    selector.unregister(key.fileobj)
+            else:
+                _sleep(timeout)
         while delayed_tasks and delayed_tasks[0].wakeup_time < now():
             task = heappop(delayed_tasks)
             tasks.append(task)
@@ -164,6 +173,10 @@ def run_until_complete(coro):
                     multi_coro_wrappers[task.coro] = MultiCoroWrapper(res.coros)
                 elif isinstance(res, SleepEvent):
                     heappush(delayed_tasks, Task(task.coro, None, wakeup_time=res.wakeup_time))
+                elif isinstance(res, WriteEvent):
+                    selector.register(res.stream, EVENT_WRITE, task.coro)
+                elif isinstance(res, ReadEvent):
+                    selector.register(res.stream, EVENT_READ, task.coro)
                 else:
                     tasks.append(task)
     return ret
