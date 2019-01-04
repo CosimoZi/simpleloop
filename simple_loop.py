@@ -4,6 +4,8 @@ from heapq import heappop, heappush
 from timeit import default_timer as now
 from time import sleep as _sleep
 from functools import total_ordering
+from itertools import chain
+from weakref import WeakKeyDictionary
 from selectors import DefaultSelector, EVENT_READ, EVENT_WRITE
 from urllib.parse import urlparse
 import socket
@@ -31,13 +33,8 @@ class SpawnEvent(Event):
 
 
 class JoinEvent(Event):
-    def __init__(self, coro):
-        self.coro = coro
-
-
-class JoinAllEvent(Event):
-    def __init__(self, *coros):
-        self.coros = coros
+    def __init__(self, future):
+        self.future = future
 
 
 class SleepEvent(Event):
@@ -67,15 +64,16 @@ def join(future):
     return result
 
 
-@coroutine
-def joinall(*futures):
-    result = yield JoinAllEvent(*futures)
+async def joinall(*futures):
+    future = Future(*chain(*(f.coros for f in futures)))
+    result = await join(future)
     return result
 
 
 @coroutine
 def sleep(seconds):
     yield SleepEvent(seconds)
+    return seconds
 
 
 @coroutine
@@ -131,8 +129,8 @@ class Task:
         return self.wakeup_time < other.wakeup_time
 
 
-class MultiCoroWrapper:
-    def __init__(self, coros):
+class Future:
+    def __init__(self, *coros):
         self.coros = coros
         self.results = {}
 
@@ -145,14 +143,15 @@ class MultiCoroWrapper:
 
     @property
     def result(self):
-        return (self.results[coro] for coro in self.coros)
+        if len(self.coros) == 1:
+            return self.results[self.coros[0]]
+        return [self.results[coro] for coro in self.coros]
 
 
 def run_until_complete(coro):
     tasks = [Task(coro, None)]
-    join_watcher = defaultdict(list)
-    joinall_watcher = defaultdict(list)
-    multi_coro_wrappers = dict()
+    watcher = defaultdict(list)
+    future_finder = WeakKeyDictionary()
     delayed_tasks = []
     selector = DefaultSelector()
     ret = None
@@ -178,22 +177,20 @@ def run_until_complete(coro):
                 res = task.coro.send(task.trigger)
             except StopIteration as e:
                 ret = e.value
-                tasks.extend(Task(join_coro, e.value) for join_coro in join_watcher.pop(task.coro, []))
-                for joinall_coro in joinall_watcher.pop(task.coro, []):
-                    wrapper = multi_coro_wrappers[joinall_coro]
-                    wrapper.set_result(task.coro, e.value)
-                    if wrapper.all_done:
-                        tasks.append(Task(joinall_coro, wrapper.result))
+                future = future_finder.get(task.coro)
+                if future:
+                    future.set_result(task.coro, e.value)
+                    if future.all_done:
+                        for coro in watcher.pop(future, []):
+                            tasks.append(Task(coro, future.result))
             else:
                 if isinstance(res, SpawnEvent):
                     tasks.append(Task(res.coro, None))
-                    tasks.append(Task(task.coro, res.coro))
+                    tasks.append(Task(task.coro, Future(res.coro)))
                 elif isinstance(res, JoinEvent):
-                    join_watcher[res.coro].append(task.coro)
-                elif isinstance(res, JoinAllEvent):
-                    for coro in res.coros:
-                        joinall_watcher[coro].append(task.coro)
-                    multi_coro_wrappers[task.coro] = MultiCoroWrapper(res.coros)
+                    watcher[res.future].append(task.coro)
+                    for coro in res.future.coros:
+                        future_finder[coro] = res.future
                 elif isinstance(res, SleepEvent):
                     heappush(delayed_tasks, Task(task.coro, None, wakeup_time=res.wakeup_time))
                 elif isinstance(res, WriteEvent):
@@ -207,4 +204,4 @@ def run_until_complete(coro):
 
 if __name__ == '__main__':
     with timer():
-        print(list(run_until_complete(main_coro())))
+        print(run_until_complete(main_coro()))
