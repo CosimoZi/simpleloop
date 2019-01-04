@@ -162,7 +162,6 @@ def run_until_complete(coro):
             else:
                 timeout = None
             if selector.get_map():
-                # print(dict(selector.get_map()))
                 for key, events in selector.select(timeout):
                     tasks.append(Task(key.data, None))
                     selector.unregister(key.fileobj)
