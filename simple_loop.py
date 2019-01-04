@@ -117,7 +117,6 @@ def run_until_complete(coro):
             try:
                 res = task.coro.send(task.trigger)
             except StopIteration as e:
-                # tasks.extend(Task(join_coro, e.value) for join_coro in join_watcher.pop(task.coro, []))
                 ret = e.value
                 future = future_finder.get(task.coro)
                 if future:
